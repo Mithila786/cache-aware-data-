@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ex 2: Cache-Aware Data Structures</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mut:#5b6572;--bd:#dde1e7;--c1:#e8590c;--c2:#2563eb;--acc:#2563eb}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#101317;--card:#181c22;--tx:#e8ebef;--mut:#9aa4b1;--bd:#2b323b;--c1:#ff9248;--c2:#5b9bff;--acc:#5b9bff}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#101317;--card:#181c22;--tx:#e8ebef;--mut:#9aa4b1;--bd:#2b323b;--c1:#ff9248;--c2:#5b9bff;--acc:#5b9bff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*:before,*:after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.05rem;margin:0 0 10px}
+.sub{color:var(--mut);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+label{display:block;font-size:.8rem;color:var(--mut);margin-bottom:3px}
+input,select{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+button{padding:9px 18px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.msg{color:var(--mut);font-size:.85rem}.err{color:#d93025}
+pre{margin:0;padding:12px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;overflow-x:auto;font-size:.82rem;line-height:1.5}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--tx);font-size:11px}svg .m{fill:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<h1>Ex 2: Cache-Aware Data Structures</h1>
+<p class="sub">CP25C01 – Advanced Data Structures and Algorithms Lab · Measures how access pattern and data layout (spatial locality) change running time and memory. Runs live in your browser using typed arrays; each test is repeated r times and the minimum time is reported.</p>
+
+<div class="card">
+<h2>Inputs</h2>
+<div class="grid">
+<div><label for="n">Matrix size n (n×n, 256–4096)</label><input id="n" type="number" value="2048" min="256" max="4096" step="256"></div>
+<div><label for="tiles">Tile sizes (comma separated)</label><input id="tiles" value="16, 64, 256"></div>
+<div><label for="N">Sensor records N</label><input id="N" type="number" value="500000" min="1000" max="2000000"></div>
+<div><label for="M">Linked-list length M</label><input id="M" type="number" value="1000000" min="1000" max="3000000"></div>
+<div><label for="r">Repeats r</label><input id="r" type="number" value="3" min="1" max="10"></div>
+<div><label for="cache">Cache size for tile rule (KB)</label><input id="cache" type="number" value="32"></div>
+</div>
+<div class="row"><button id="run">Run experiment</button><span class="msg" id="status">Tip: 4096 uses 128 MB per matrix (two are needed for transpose); use 2048 on phones.</span></div>
+</div>
+
+<div class="card" id="outCard" hidden><h2>Output</h2><pre id="out"></pre></div>
+<div class="charts" id="charts" hidden>
+<div class="card"><h2>[1] Matrix traversal (ms)</h2><div id="c1"></div></div>
+<div class="card"><h2>[2] Transpose (ms) by tile size</h2><div id="c2"></div></div>
+<div class="card"><h2>[3a] AoS vs SoA memory (MB)</h2><div id="c3"></div></div>
+<div class="card"><h2>[3b] AoS vs SoA scan time (ms, log scale)</h2><div id="c4"></div></div>
+<div class="card"><h2>[4] Linked list vs array sum (ms, log scale)</h2><div id="c5"></div></div>
+</div>
+</main>
+<script>
+"use strict";
+const $=id=>document.getElementById(id), tick=()=>new Promise(r=>setTimeout(r,0));
+function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rand=rng(1);
+function best(fn,r){let b=Infinity;for(let i=0;i<r;i++){const t=performance.now();fn();b=Math.min(b,performance.now()-t)}return b}
+const f=(x,d=2)=>x.toFixed(d);
+
+/* 1. traversal */
+function rowSum(A,n){let s=0;for(let i=0;i<n;i++){const o=i*n;for(let j=0;j<n;j++)s+=A[o+j]}return s}
+function colSum(A,n){let s=0;for(let j=0;j<n;j++)for(let i=0;i<n;i++)s+=A[i*n+j];return s}
+/* 2. transpose */
+function tNaive(A,B,n){for(let i=0;i<n;i++)for(let j=0;j<n;j++)B[j*n+i]=A[i*n+j]}
+function tBlock(A,B,n,b){for(let ii=0;ii<n;ii+=b)for(let jj=0;jj<n;jj+=b){const ie=Math.min(ii+b,n),je=Math.min(jj+b,n);
+  for(let i=ii;i<ie;i++)for(let j=jj;j<je;j++)B[j*n+i]=A[i*n+j]}}
+
+function bars(el,items,unit,log){
+  const W=420,H=250,m={l:46,r:10,t:16,b:44},iw=W-m.l-m.r,ih=H-m.t-m.b,vals=items.map(i=>i.v);
+  let lo=0,hi=Math.max(...vals)*1.15,sc=v=>v/hi;
+  if(log){const mn=Math.min(...vals.filter(v=>v>0)),a=Math.log10(mn/2),b=Math.log10(Math.max(...vals)*2);sc=v=>(Math.log10(Math.max(v,mn/2))-a)/(b-a)}
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${unit} bar chart">`;
+  if(!log)for(let i=0;i<=4;i++){const v=hi*i/4,y=m.t+ih-ih*i/4;s+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y}" y2="${y}" stroke="var(--bd)"/><text class="m" x="${m.l-6}" y="${y+4}" text-anchor="end">${v<10?v.toFixed(1):v.toFixed(0)}</text>`}
+  else s+=`<line x1="${m.l}" x2="${W-m.r}" y1="${m.t+ih}" y2="${m.t+ih}" stroke="var(--bd)"/>`;
+  const gw=iw/items.length,bw=Math.min(54,gw*.6);
+  items.forEach((it,i)=>{const h=ih*sc(it.v),x=m.l+i*gw+(gw-bw)/2;
+    s+=`<rect x="${x}" y="${m.t+ih-h}" width="${bw}" height="${h}" rx="3" fill="${it.c||"var(--c2)"}"/><text x="${x+bw/2}" y="${m.t+ih-h-4}" text-anchor="middle">${it.v<10?f(it.v):it.v.toFixed(0)}</text>`;
+    const w=it.l.split("\n");w.forEach((t,k)=>s+=`<text class="m" x="${x+bw/2}" y="${H-26+k*12}" text-anchor="middle">${t}</text>`)});
+  $(el).innerHTML=s+"</svg>"}
+
+$("run").onclick=async()=>{
+  const st=$("status");st.className="msg";
+  const n=+$("n").value,N=+$("N").value,M=+$("M").value,r=+$("r").value,cache=+$("cache").value;
+  const tiles=$("tiles").value.split(/[,\s]+/).filter(Boolean).map(Number);
+  if(![n,N,M,r,cache].every(Number.isInteger)||n<256||n>4096||r<1||!tiles.length||tiles.some(t=>!Number.isInteger(t)||t<2||t>n)){st.textContent="Check inputs: integers only, n 256–4096, tile sizes between 2 and n.";st.className="msg err";return}
+  $("run").disabled=true;let o="CACHE-AWARE DATA STRUCTURES - locality and memory analysis\n"+"=".repeat(66)+"\n";
+  try{
+    st.textContent="[1] traversal …";await tick();
+    const A=new Float64Array(n*n);for(let i=0;i<A.length;i++)A[i]=rand();
+    const sR=rowSum(A,n),sC=colSum(A,n);
+    const tr=best(()=>rowSum(A,n),r),tc=best(()=>colSum(A,n),r);
+    o+=`[1] ${n}x${n} float64 matrix (${f(n*n*8/1048576,0)} MB), C-order\n    Row-wise traversal    : ${f(tr,1).padStart(8)} ms\n    Column-wise traversal : ${f(tc,1).padStart(8)} ms   (slowdown x${f(tc/tr)})\n    Sums equal            : ${Math.abs(sR-sC)<1e-6*Math.abs(sR)}\n`;
+    const c1=[{l:"Row-wise",v:tr,c:"var(--c2)"},{l:"Column-wise",v:tc,c:"var(--c1)"}];
+
+    st.textContent="[2] transpose …";await tick();
+    const B=new Float64Array(n*n),tn=best(()=>tNaive(A,B,n),Math.min(r,2));
+    let ok=true;const chk=()=>{for(let k=0;k<2000;k++){const i=(k*7919)%n,j=(k*104729)%n;if(B[j*n+i]!==A[i*n+j])return false}return true};
+    ok=chk();
+    o+=`\n[2] Matrix transpose ${n}x${n}\n    Naive (row->column)   : ${f(tn,1).padStart(8)} ms\n`;
+    const c2=[{l:"Naive",v:tn,c:"var(--c1)"}];let bt=null;
+    for(const b of tiles){B.fill(0);await tick();const t=best(()=>tBlock(A,B,n,b),Math.min(r,2));ok=ok&&chk();
+      o+=`    Blocked (tile=${String(b).padStart(3)})  : ${f(t,1).padStart(8)} ms   speed-up x${f(tn/t)}\n`;c2.push({l:"tile "+b,v:t});if(!bt||t<bt[1])bt=[b,t]}
+    const rec=Math.floor(Math.sqrt(cache*1024/16));
+    o+=`    Output verified       : ${ok}\n    Fastest tile here     : ${bt[0]}   |   Ideal-cache rule 2·b²·8 B ≤ ${cache} KB gives b ≤ ${rec}\n`;
+
+    st.textContent="[3] AoS vs SoA …";await tick();
+    const hm=()=>performance.memory?performance.memory.usedJSHeapSize:null;
+    const h0=hm();let aos=[];
+    for(let i=0;i<N;i++)aos.push({id:i,temp:20+rand()*20,hum:30+rand()*60});
+    const h1=hm();
+    const mSoA=(N*4+N*8+N*8)/1048576;
+    const mAoS=(h0!==null&&h1-h0>0)?(h1-h0)/1048576:N*64/1048576, est=!(h0!==null&&h1-h0>0);
+    const id=new Int32Array(N),tp=new Float64Array(N),hu=new Float64Array(N);
+    for(let i=0;i<N;i++){id[i]=aos[i].id;tp[i]=aos[i].temp;hu[i]=aos[i].hum}
+    let a1=0,a2=0;
+    const tA=best(()=>{let s=0;for(let i=0;i<N;i++)s+=aos[i].temp;a1=s},r);
+    const tS=best(()=>{let s=0;for(let i=0;i<N;i++)s+=tp[i];a2=s},r);
+    o+=`\n[3] ${N.toLocaleString()} sensor readings: AoS vs SoA\n    AoS (objects) memory  : ${f(mAoS).padStart(8)} MB${est?" (estimated, ~64 B/record)":" (JS heap delta)"}   avg-temp scan ${f(tA).padStart(7)} ms\n    SoA (packed)  memory  : ${f(mSoA).padStart(8)} MB   avg-temp scan ${f(tS).padStart(7)} ms\n    Memory saving         : ${f(100*(1-mSoA/mAoS),1)} %   |   scan speed-up x${f(tA/tS,1)}   |   sums equal: ${Math.abs(a1-a2)<1e-6*Math.abs(a1)}\n`;
+
+    st.textContent="[4] pointer chasing …";await tick();
+    aos=null;
+    const perm=new Int32Array(M);for(let i=0;i<M;i++)perm[i]=i;
+    for(let i=M-1;i>0;i--){const j=Math.floor(rand()*(i+1)),t=perm[i];perm[i]=perm[j];perm[j]=t}
+    const nodes=new Array(M);for(let i=0;i<M;i++)nodes[i]={v:i,nxt:null};
+    for(let k=0;k<M-1;k++)nodes[perm[k]].nxt=nodes[perm[k+1]];
+    const head=nodes[perm[0]];let w1=0,w2=0;
+    const arr=new Float64Array(M);for(let i=0;i<M;i++)arr[i]=i;
+    const tL=best(()=>{let s=0,x=head;while(x){s+=x.v;x=x.nxt}w1=s},r),tAr=best(()=>{let s=0;for(let i=0;i<M;i++)s+=arr[i];w2=s},r);
+    o+=`\n[4] Sum of ${M.toLocaleString()} integers\n    Linked list (random addresses) : ${f(tL,1).padStart(8)} ms\n    Contiguous Float64Array        : ${f(tAr).padStart(8)} ms   (x${f(tL/tAr,1)} faster)\n    Sums equal                     : ${w1===w2}\n`;
+
+    $("out").textContent=o;$("outCard").hidden=false;$("charts").hidden=false;
+    bars("c1",c1,"ms");bars("c2",c2,"ms");
+    bars("c3",[{l:"AoS\n(objects)",v:mAoS,c:"var(--c1)"},{l:"SoA\n(typed arrays)",v:mSoA}],"MB");
+    bars("c4",[{l:"AoS",v:tA,c:"var(--c1)"},{l:"SoA",v:tS}],"ms",true);
+    bars("c5",[{l:"Linked list\n(random)",v:tL,c:"var(--c1)"},{l:"Array",v:tAr}],"ms",true);
+    st.textContent="Done. Timings depend on your CPU cache, browser and JIT.";
+  }catch(e){st.textContent="Failed (probably out of memory): try smaller sizes. "+e.message;st.className="msg err"}
+  $("run").disabled=false};
+</script>
+</body>
+</html>
